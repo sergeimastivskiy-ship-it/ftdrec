@@ -312,6 +312,7 @@
         .badge-success { background: #dcfce7; color: #166534; }
         .badge-danger { background: #fee2e2; color: #991b1b; }
         .badge-warning { background: #fef3c7; color: #92400e; }
+        .badge-secondary { background: #e5e7eb; color: #374151; }
         .salary-calc {
             background: linear-gradient(135deg, var(--secondary), #059669);
             color: white;
@@ -2580,7 +2581,7 @@
                 if (!record.manager) {
                     errors.manager = 'Менеджер обязателен';
                 }
-                if (!['valid', 'invalid', 'pending'].includes(record.validity)) {
+                if (!['valid', 'invalid', 'pending', 'not_counted'].includes(record.validity)) {
                     errors.validity = 'Некорректный статус валидности';
                 }
                 return {
@@ -3770,7 +3771,7 @@
             calculateStats(records) {
                 const total = records.length;
                 const valid = records.filter(r => r.validity === 'valid').length;
-                const invalid = total - valid;
+                const invalid = records.filter(r => r.validity === 'invalid').length;
                 const conversion = total > 0 ? parseFloat(((valid / total) * 100).toFixed(1)) : 0;
                 return { total, valid, invalid, conversion };
             },
@@ -5460,6 +5461,7 @@
                                         <option value="valid">Валидный</option>
                                         <option value="invalid">Невалидный</option>
                                         <option value="pending">На рассмотрении</option>
+                                        <option value="not_counted">Не засчитано</option>
                                     </select>
                                 </div>
                                 <div className="form-group">
@@ -7014,6 +7016,7 @@
                                                         <option value="valid">Валидный</option>
                                                         <option value="invalid">Невалидный</option>
                                                         <option value="pending">На рассмотрении</option>
+                                                        <option value="not_counted">Не засчитано</option>
                                                     </select>
                                                 </td>
                                                 <td>
@@ -7091,10 +7094,12 @@
                                                     <Badge variant={
                                                         record.validity === 'valid' ? 'success' : 
                                                         record.validity === 'invalid' ? 'danger' : 
+                                                        record.validity === 'not_counted' ? 'secondary' :
                                                         'warning'
                                                     }>
                                                         {record.validity === 'valid' ? 'Валидный' : 
                                                          record.validity === 'invalid' ? 'Невалидный' : 
+                                                         record.validity === 'not_counted' ? 'Не засчитано' :
                                                          'На рассмотрении'}
                                                     </Badge>
                                                 </td>
