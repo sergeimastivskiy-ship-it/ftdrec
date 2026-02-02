@@ -9,7 +9,7 @@ window.ENV_CONFIG = {
     },
     
     // Тимлид
-    TEAM_LEADER_NAME: 'Сергей Мастиновский',
+    TEAM_LEADER_NAME: '',
     TEAM_LEADER_BASE_RATE: 900,
     TEAM_LEADER_SALARY_PASSWORD: '77777',
     
@@ -29,8 +29,8 @@ window.ENV_CONFIG = {
     AVAILABLE_YEARS: [2024, 2025, 2026, 2027],
     
     // Менеджеры
-    DEFAULT_MANAGERS: ['Сергей Мастиновский', 'Александр Литвинов'],
-    INITIAL_MANAGERS: ['Сергей Мастиновский'],
+    DEFAULT_MANAGERS: ['Александр Литвинов'],
+    INITIAL_MANAGERS: [],
     
     // Бонусы и ставки
     INVALID_BONUS_PER_FTD: 20,
