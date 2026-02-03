@@ -2153,6 +2153,89 @@
             }
         };
         
+        // Утилита для Push-уведомлений браузера
+        const PushNotificationUtils = {
+            // Проверка поддержки уведомлений
+            isSupported() {
+                return 'Notification' in window;
+            },
+            
+            // Получение текущего разрешения
+            getPermission() {
+                if (!this.isSupported()) return 'unsupported';
+                return Notification.permission;
+            },
+            
+            // Запрос разрешения на уведомления
+            async requestPermission() {
+                if (!this.isSupported()) {
+                    return { granted: false, reason: 'unsupported' };
+                }
+                
+                if (Notification.permission === 'granted') {
+                    return { granted: true };
+                }
+                
+                if (Notification.permission === 'denied') {
+                    return { granted: false, reason: 'denied' };
+                }
+                
+                try {
+                    const permission = await Notification.requestPermission();
+                    return { granted: permission === 'granted', reason: permission };
+                } catch (error) {
+                    return { granted: false, reason: 'error' };
+                }
+            },
+            
+            // Отправка уведомления
+            async send(title, options = {}) {
+                if (!this.isSupported()) return false;
+                if (Notification.permission !== 'granted') return false;
+                
+                try {
+                    const notification = new Notification(title, {
+                        icon: 'https://i.pinimg.com/736x/6a/27/26/6a2626c7f2ab9d5e9b3a91626fcc3288.jpg',
+                        badge: 'https://i.pinimg.com/736x/6a/27/26/6a2626c7f2ab9d5e9b3a91626fcc3288.jpg',
+                        vibrate: [200, 100, 200],
+                        requireInteraction: false,
+                        ...options
+                    });
+                    
+                    // Автоматическое закрытие через 5 секунд
+                    setTimeout(() => notification.close(), 5000);
+                    
+                    return true;
+                } catch (error) {
+                    return false;
+                }
+            },
+            
+            // Уведомление о выполнении плана
+            async notifyPlanCompleted(managerName, ftdCount, goal) {
+                return this.send(
+                    '🎉 План выполнен!',
+                    {
+                        body: `${managerName} выполнил план: ${ftdCount}/${goal} FTD`,
+                        tag: `plan-completed-${managerName}`,
+                        renotify: true
+                    }
+                );
+            },
+            
+            // Уведомление о приближении к плану
+            async notifyPlanProgress(managerName, ftdCount, goal, percent) {
+                return this.send(
+                    '📈 Прогресс по плану',
+                    {
+                        body: `${managerName}: ${ftdCount}/${goal} FTD (${percent}%)`,
+                        tag: `plan-progress-${managerName}`,
+                        renotify: false
+                    }
+                );
+            }
+        };
+        
         const ManagerUtils = {
             isTeamLeader(manager) {
                 return manager === TEAM_LEADER_NAME;
@@ -2605,7 +2688,7 @@
                         await store.delete(key);
                         return true;
                     } catch (error) {
-(`Ошибка при удалении ${key} из IndexedDB:`, error);
+                        console.error(`Ошибка при удалении ${key} из IndexedDB:`, error);
                         return false;
                     }
                 }
@@ -3613,6 +3696,82 @@
             return { monthRecords, monthPenalties, monthBonuses };
         };
         
+        // Хук для Push-уведомлений о достижении плана
+        const usePlanNotifications = () => {
+            const { records, monthlyGoals, managers, disabledAgents } = useData();
+            const [notificationsEnabled, setNotificationsEnabled] = useState(() => {
+                return localStorage.getItem('planNotificationsEnabled') === 'true';
+            });
+            const [permissionStatus, setPermissionStatus] = useState(() => 
+                PushNotificationUtils.getPermission()
+            );
+            const notifiedPlansRef = React.useRef(new Set());
+            
+            // Включение/выключение уведомлений
+            const toggleNotifications = useCallback(async () => {
+                if (!notificationsEnabled) {
+                    const result = await PushNotificationUtils.requestPermission();
+                    if (result.granted) {
+                        setNotificationsEnabled(true);
+                        setPermissionStatus('granted');
+                        localStorage.setItem('planNotificationsEnabled', 'true');
+                        return { success: true };
+                    } else {
+                        setPermissionStatus(result.reason);
+                        return { success: false, reason: result.reason };
+                    }
+                } else {
+                    setNotificationsEnabled(false);
+                    localStorage.setItem('planNotificationsEnabled', 'false');
+                    return { success: true };
+                }
+            }, [notificationsEnabled]);
+            
+            // Отслеживание выполнения планов
+            useEffect(() => {
+                if (!notificationsEnabled || permissionStatus !== 'granted') return;
+                
+                const currentMonthKey = DateUtils.getCurrentMonthKey();
+                const currentGoals = monthlyGoals[currentMonthKey] || {};
+                const monthDisabled = disabledAgents[currentMonthKey] || [];
+                const monthRecords = DateUtils.filterByMonth(records, currentMonthKey);
+                
+                managers.forEach(manager => {
+                    if (monthDisabled.includes(manager)) return;
+                    
+                    const goal = currentGoals[manager] || 0;
+                    if (goal === 0) return;
+                    
+                    const validCount = monthRecords.filter(
+                        r => r.manager === manager && r.validity === 'valid'
+                    ).length;
+                    
+                    const notificationKey = `${currentMonthKey}-${manager}-${goal}`;
+                    
+                    // Уведомление о выполнении плана (только один раз)
+                    if (validCount >= goal && !notifiedPlansRef.current.has(notificationKey)) {
+                        notifiedPlansRef.current.add(notificationKey);
+                        PushNotificationUtils.notifyPlanCompleted(manager, validCount, goal);
+                    }
+                    
+                    // Уведомление о прогрессе (90%)
+                    const progressKey90 = `${notificationKey}-90`;
+                    const percent = Math.round((validCount / goal) * 100);
+                    if (percent >= 90 && percent < 100 && !notifiedPlansRef.current.has(progressKey90)) {
+                        notifiedPlansRef.current.add(progressKey90);
+                        PushNotificationUtils.notifyPlanProgress(manager, validCount, goal, percent);
+                    }
+                });
+            }, [records, monthlyGoals, managers, disabledAgents, notificationsEnabled, permissionStatus]);
+            
+            return {
+                notificationsEnabled,
+                permissionStatus,
+                toggleNotifications,
+                isSupported: PushNotificationUtils.isSupported()
+            };
+        };
+        
         const ManagerDataCalculator = {
             calculateBaseStats(manager, monthRecords, goals, monthKey, disabledAgents = {}) {
                 const stats = Calculator.getManagerStats(monthRecords, manager);
@@ -4186,17 +4345,19 @@
                 };
             }
         };
-        const StatCard = ({ title, value, icon }) => (
+        // Оптимизированные компоненты с React.memo
+        const StatCard = React.memo(({ title, value, icon }) => (
             <div className="stat-card">
                 <h4>{title}</h4>
                 <div className="stat-value">{icon} {value}</div>
             </div>
-        );
-        const Badge = ({ children, variant }) => (
+        ));
+        
+        const Badge = React.memo(({ children, variant }) => (
             <span className={`badge badge-${variant}`}>
                 {children}
             </span>
-        );
+        ));
         const Modal = ({ isOpen, onClose, onConfirm, message }) => {
             if (!isOpen) return null;
             return (
@@ -5024,7 +5185,8 @@
             );
         };
         
-        const ManagerBadges = ({ manager, initialManagers }) => {
+        // Оптимизированный компонент бейджей менеджера
+        const ManagerBadges = React.memo(({ manager, initialManagers }) => {
             const isNewManager = ManagerUtils.isNewManager(manager, initialManagers);
             
             return (
@@ -5032,7 +5194,7 @@
                     {isNewManager && <span className="sale-badge">Сейл</span>}
                 </div>
             );
-        };
+        });
         
         const ManagerProgress = ({ manager, validCount, goal, initialManagers, monthlyGoals, monthKey, disabledAgents = {} }) => {
             const progress = Calculator.getProgressPercentage(monthlyGoals, manager, validCount, monthKey, disabledAgents);
@@ -5938,16 +6100,55 @@
             const { records, penalties, bonuses, monthlyGoals, tariffs, invalidBonusPerFTD, teamLeaderPerFTD, teamPlanBonusAmount, plannedDays, attendance, managers, initialManagers, managerBaseRates, managerTariffs, managerClientsCount, initializeMonthGoals, getWorkedDays, disabledAgents, isAgentDisabled, getActiveManagersForMonth } = useData();
             const [yearFilter, setYearFilter] = useState('2026');
             const [comparePrevious, setComparePrevious] = useState(false);
+            
+            // Оптимизация: Фильтрация записей вынесена в отдельный useMemo
             const filteredRecords = useMemo(() => {
-                let recs = records;
-                if (yearFilter) {
-                    recs = recs.filter(r => new Date(r.date).getFullYear().toString() === yearFilter);
-                }
-                return recs;
+                if (!yearFilter) return records;
+                const yearNum = parseInt(yearFilter, 10);
+                return records.filter(r => new Date(r.date).getFullYear() === yearNum);
             }, [records, yearFilter]);
+            
+            // Оптимизация: Сбор месяцев без побочных эффектов
+            const monthKeys = useMemo(() => {
+                const keys = new Set();
+                const yearFilterNum = yearFilter ? parseInt(yearFilter, 10) : null;
+                
+                filteredRecords.forEach(record => {
+                    const date = new Date(record.date);
+                    if (yearFilterNum && date.getFullYear() !== yearFilterNum) return;
+                    keys.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+                });
+                
+                if (penalties) {
+                    penalties.forEach(p => {
+                        const date = new Date(p.date);
+                        if (yearFilterNum && date.getFullYear() !== yearFilterNum) return;
+                        keys.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+                    });
+                }
+                
+                if (bonuses) {
+                    bonuses.forEach(b => {
+                        const date = new Date(b.date);
+                        if (yearFilterNum && date.getFullYear() !== yearFilterNum) return;
+                        keys.add(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+                    });
+                }
+                
+                return Array.from(keys);
+            }, [filteredRecords, penalties, bonuses, yearFilter]);
+            
+            // Инициализация целей месяцев вынесена в useEffect (побочный эффект)
+            useEffect(() => {
+                monthKeys.forEach(monthKey => {
+                    initializeMonthGoals(monthKey);
+                });
+            }, [monthKeys, initializeMonthGoals]);
+            
+            // Оптимизация: Данные по месяцам без побочных эффектов
             const monthlyData = useMemo(() => {
                 const data = {};
-                const yearFilterNum = yearFilter ? parseInt(yearFilter) : null;
+                const yearFilterNum = yearFilter ? parseInt(yearFilter, 10) : null;
                 
                 filteredRecords.forEach(record => {
                     const date = new Date(record.date);
@@ -5962,7 +6163,6 @@
                             penalties: [], 
                             bonuses: [] 
                         };
-                        initializeMonthGoals(monthKey);
                     }
                     data[monthKey].records.push(record);
                     const mgr = record.manager;
@@ -5979,10 +6179,10 @@
                 
                 if (penalties) {
                     penalties.forEach(p => {
-                    const date = new Date(p.date);
+                        const date = new Date(p.date);
                         if (yearFilterNum && date.getFullYear() !== yearFilterNum) return;
-                    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                    if (!data[monthKey]) {
+                        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                        if (!data[monthKey]) {
                             data[monthKey] = { 
                                 name: DateUtils.formatMonthWithYear(monthKey), 
                                 records: [], 
@@ -5991,18 +6191,17 @@
                                 penalties: [], 
                                 bonuses: [] 
                             };
-                        initializeMonthGoals(monthKey);
-                    }
-                    data[monthKey].penalties.push(p);
-                });
+                        }
+                        data[monthKey].penalties.push(p);
+                    });
                 }
                 
                 if (bonuses) {
                     bonuses.forEach(b => {
-                    const date = new Date(b.date);
+                        const date = new Date(b.date);
                         if (yearFilterNum && date.getFullYear() !== yearFilterNum) return;
-                    const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-                    if (!data[monthKey]) {
+                        const monthKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+                        if (!data[monthKey]) {
                             data[monthKey] = { 
                                 name: DateUtils.formatMonthWithYear(monthKey), 
                                 records: [], 
@@ -6011,12 +6210,12 @@
                                 penalties: [], 
                                 bonuses: [] 
                             };
-                        initializeMonthGoals(monthKey);
-                    }
-                    data[monthKey].bonuses.push(b);
-                });
+                        }
+                        data[monthKey].bonuses.push(b);
+                    });
                 }
                 
+                // Добавляем пустые данные для всех менеджеров
                 Object.keys(data).forEach(monthKey => {
                     managers.forEach(manager => {
                         if (!data[monthKey].managers[manager]) {
@@ -6026,14 +6225,14 @@
                 });
                 
                 return data;
-            }, [filteredRecords, penalties, bonuses, monthlyGoals, initializeMonthGoals, yearFilter, managers]);
+            }, [filteredRecords, penalties, bonuses, monthlyGoals, yearFilter, managers]);
+            // Оптимизация: getPreviousMonthData без побочных эффектов
             const getPreviousMonthData = useCallback((monthKey) => {
                 const date = new Date(monthKey + '-01');
                 date.setMonth(date.getMonth() - 1);
                 const prevYear = date.getFullYear();
                 const prevMonthNum = date.getMonth() + 1;
                 const prevMonthKey = `${prevYear}-${String(prevMonthNum).padStart(2, '0')}`;
-                initializeMonthGoals(prevMonthKey);
                 const prevGoals = monthlyGoals[prevMonthKey] || {};
                 const prevRecords = records.filter(r => {
                     const rDate = new Date(r.date);
@@ -6063,7 +6262,7 @@
                     return bDate.getFullYear() === prevYear && (bDate.getMonth() + 1) === prevMonthNum;
                 });
                 return { monthKey: prevMonthKey, records: prevRecords, managers: prevManagers, stats: prevStats, goals: prevGoals, penalties: prevPenalties, bonuses: prevBonuses };
-            }, [records, penalties, bonuses, monthlyGoals, initializeMonthGoals]);
+            }, [records, penalties, bonuses, monthlyGoals]);
             return (
                 <div>
                     <div className="section">
@@ -6942,6 +7141,7 @@
         const SettingsTab = () => {
             const { records, tariffs, monthlyGoals, plannedDays, managers, initialManagers, invalidBonusPerFTD, teamLeaderPerFTD, teamPlanBonusAmount, managerBaseRates, managerTariffs, managerClientsCount, updateTariff, resetTariffs, updateMonthlyGoal, initializeMonthGoals, updatePlannedDays, updateInvalidBonus, updateTeamLeaderPerFTD, updateTeamPlanBonusAmount, addManager, deleteManager, updateManagerBaseRate, updateManagerTariffs, updateManagerClientsCount, exportData, importData, disabledAgents, toggleAgentDisabled, isAgentDisabled, penalties, bonuses, attendance } = useData();
             const { addNotification } = useNotification();
+            const { notificationsEnabled, permissionStatus, toggleNotifications, isSupported: notificationsSupported } = usePlanNotifications();
             const [isAuthorized, setIsAuthorized] = useState(() => {
                 const stored = sessionStorage.getItem('settingsAuthorized');
                 return stored === 'true';
@@ -7657,6 +7857,99 @@
                             💡 <strong>Отключенные агенты:</strong> Таргет отключенного агента не учитывается в расчетах общего плана команды и статистики за выбранный месяц.
                         </p>
                     </div>
+                    
+                    {/* Секция Push-уведомлений */}
+                    <div className="section">
+                        <h3>🔔 Push-уведомления</h3>
+                        <p style={CommonStyles.mutedText}>
+                            Получайте уведомления о выполнении планов менеджерами
+                        </p>
+                        
+                        {!notificationsSupported ? (
+                            <div style={{ 
+                                padding: '1rem', 
+                                background: '#fef3c7', 
+                                borderRadius: '8px', 
+                                border: '1px solid #f59e0b',
+                                marginTop: '1rem'
+                            }}>
+                                ⚠️ Ваш браузер не поддерживает Push-уведомления
+                            </div>
+                        ) : (
+                            <div style={{ marginTop: '1rem' }}>
+                                <div style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    justifyContent: 'space-between',
+                                    padding: '1rem',
+                                    background: notificationsEnabled ? '#dcfce7' : 'var(--background)',
+                                    borderRadius: '8px',
+                                    border: `1px solid ${notificationsEnabled ? '#86efac' : 'var(--border)'}`,
+                                    marginBottom: '1rem'
+                                }}>
+                                    <div>
+                                        <strong style={{ display: 'block', marginBottom: '0.25rem' }}>
+                                            {notificationsEnabled ? '✅ Уведомления включены' : '🔕 Уведомления отключены'}
+                                        </strong>
+                                        <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                                            {notificationsEnabled 
+                                                ? 'Вы будете получать уведомления при выполнении плана' 
+                                                : 'Включите для получения уведомлений о достижении планов'}
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            const result = await toggleNotifications();
+                                            if (result.success) {
+                                                addNotification(
+                                                    notificationsEnabled 
+                                                        ? 'Уведомления отключены' 
+                                                        : 'Уведомления включены',
+                                                    'success'
+                                                );
+                                            } else if (result.reason === 'denied') {
+                                                addNotification(
+                                                    'Уведомления заблокированы в настройках браузера',
+                                                    'error'
+                                                );
+                                            }
+                                        }}
+                                        className={`btn ${notificationsEnabled ? 'btn-danger' : 'btn-primary'}`}
+                                    >
+                                        {notificationsEnabled ? '🔕 Отключить' : '🔔 Включить'}
+                                    </button>
+                                </div>
+                                
+                                {permissionStatus === 'denied' && (
+                                    <div style={{ 
+                                        padding: '0.75rem', 
+                                        background: '#fee2e2', 
+                                        borderRadius: '8px', 
+                                        border: '1px solid #fca5a5',
+                                        fontSize: '0.9rem'
+                                    }}>
+                                        ❌ Уведомления заблокированы. Разрешите их в настройках браузера (нажмите на иконку 🔒 в адресной строке).
+                                    </div>
+                                )}
+                                
+                                <div style={{ 
+                                    marginTop: '1rem', 
+                                    padding: '0.75rem', 
+                                    background: 'rgba(79, 70, 229, 0.1)', 
+                                    borderRadius: '8px',
+                                    fontSize: '0.85rem'
+                                }}>
+                                    <strong>📋 Типы уведомлений:</strong>
+                                    <ul style={{ marginTop: '0.5rem', marginBottom: 0, paddingLeft: '1.25rem' }}>
+                                        <li>🎉 Выполнение плана менеджером</li>
+                                        <li>📈 Достижение 90% от плана</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    
                     <div className="section">
                         <h3>🔒 Резервное копирование</h3>
                         <p style={CommonStyles.mutedText}>
@@ -7764,7 +8057,8 @@
             );
         };
         
-        const RecordTableRow = ({ 
+        // Оптимизированный компонент строки таблицы с React.memo
+        const RecordTableRow = React.memo(({ 
             record, 
             index, 
             isEditing, 
@@ -7832,28 +8126,77 @@
                                         )}
                                     </tr>
                                 );
-        };
+        });
         
         const SortableTable = ({ onDelete, monthFilter }) => {
             const { records, sortConfig, setSortConfig, updateRecord, managers, initialManagers, trafficOptions, countryOptions } = useData();
             const { addNotification } = useNotification();
             const [search, setSearch] = useState('');
+            const [managerFilter, setManagerFilter] = useState('');
+            const [validityFilter, setValidityFilter] = useState('');
+            const [trafficFilter, setTrafficFilter] = useState('');
+            const [countryFilter, setCountryFilter] = useState('');
+            const [showFilters, setShowFilters] = useState(false);
             const [editId, setEditId] = useState(null);
             const [editForm, setEditForm] = useState({});
             
             const filteredRecords = useMemo(() => {
                 let filtered = records;
                 
-                if (search.trim()) {
-                    filtered = filtered.filter(record =>
-                        record.clientId.toLowerCase().includes(search.toLowerCase())
-                    );
-                } else if (monthFilter) {
+                // Фильтр по месяцу (если не используется поиск)
+                if (monthFilter && !search.trim()) {
                     filtered = DateUtils.filterByMonth(filtered, monthFilter);
                 }
                 
+                // Текстовый поиск по ID клиента и менеджеру
+                if (search.trim()) {
+                    const searchLower = search.toLowerCase();
+                    filtered = filtered.filter(record =>
+                        record.clientId.toLowerCase().includes(searchLower) ||
+                        record.manager.toLowerCase().includes(searchLower)
+                    );
+                }
+                
+                // Фильтр по менеджеру
+                if (managerFilter) {
+                    filtered = filtered.filter(record => record.manager === managerFilter);
+                }
+                
+                // Фильтр по валидности
+                if (validityFilter) {
+                    filtered = filtered.filter(record => record.validity === validityFilter);
+                }
+                
+                // Фильтр по трафику
+                if (trafficFilter) {
+                    filtered = filtered.filter(record => record.traffic === trafficFilter);
+                }
+                
+                // Фильтр по стране
+                if (countryFilter) {
+                    filtered = filtered.filter(record => record.country === countryFilter);
+                }
+                
                 return filtered;
-            }, [records, search, monthFilter]);
+            }, [records, search, monthFilter, managerFilter, validityFilter, trafficFilter, countryFilter]);
+            
+            const resetFilters = useCallback(() => {
+                setSearch('');
+                setManagerFilter('');
+                setValidityFilter('');
+                setTrafficFilter('');
+                setCountryFilter('');
+            }, []);
+            
+            const activeFiltersCount = useMemo(() => {
+                let count = 0;
+                if (search.trim()) count++;
+                if (managerFilter) count++;
+                if (validityFilter) count++;
+                if (trafficFilter) count++;
+                if (countryFilter) count++;
+                return count;
+            }, [search, managerFilter, validityFilter, trafficFilter, countryFilter]);
             
             const sortedRecords = useMemo(() => {
                 return SortUtils.sortRecords(filteredRecords, sortConfig);
@@ -7896,42 +8239,151 @@
             
             return (
                 <div className="table-container">
-                    <div className="form-group" style={{...CommonStyles.marginBottomSmall, maxWidth: '100%', width: '100%', boxSizing: 'border-box'}}>
-                        <label>Поиск по ID клиента:</label>
-                        <input
-                            type="text"
-                            value={search}
-                            onChange={handleSearchChange}
-                            placeholder="Введите ID клиента"
-                            style={{
-                                maxWidth: '100%', 
-                                boxSizing: 'border-box',
-                                transition: 'none',
-                                transform: 'none',
-                                boxShadow: 'none',
-                                borderColor: 'var(--border)'
-                            }}
-                            onFocus={(e) => {
-                                e.target.style.borderColor = 'var(--border)';
-                                e.target.style.boxShadow = 'none';
-                                e.target.style.transform = 'none';
-                            }}
-                            onBlur={(e) => {
-                                e.target.style.borderColor = 'var(--border)';
-                                e.target.style.boxShadow = 'none';
-                                e.target.style.transform = 'none';
-                            }}
-                            onMouseEnter={(e) => {
-                                e.target.style.borderColor = 'var(--border)';
-                                e.target.style.boxShadow = 'none';
-                                e.target.style.transform = 'none';
-                            }}
-                            onMouseLeave={(e) => {
-                                e.target.style.borderColor = 'var(--border)';
-                                e.target.style.boxShadow = 'none';
-                                e.target.style.transform = 'none';
-                            }}
-                        />
+                    {/* Панель поиска и фильтров */}
+                    <div style={{ marginBottom: '1rem', background: 'var(--background)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                        {/* Поисковая строка */}
+                        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: showFilters ? '1rem' : 0 }}>
+                            <div style={{ flex: 1 }}>
+                                <input
+                                    type="text"
+                                    value={search}
+                                    onChange={handleSearchChange}
+                                    placeholder="🔍 Поиск по ID клиента или менеджеру..."
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.75rem 1rem',
+                                        border: '2px solid var(--border)',
+                                        borderRadius: '8px',
+                                        fontSize: '0.9rem',
+                                        background: 'var(--surface)'
+                                    }}
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setShowFilters(!showFilters)}
+                                className="btn btn-secondary"
+                                style={{ 
+                                    display: 'flex', 
+                                    alignItems: 'center', 
+                                    gap: '0.5rem',
+                                    background: showFilters ? 'var(--primary)' : 'var(--text-muted)',
+                                    position: 'relative'
+                                }}
+                            >
+                                🎛️ Фильтры
+                                {activeFiltersCount > 0 && (
+                                    <span style={{
+                                        position: 'absolute',
+                                        top: '-8px',
+                                        right: '-8px',
+                                        background: 'var(--danger)',
+                                        color: 'white',
+                                        borderRadius: '50%',
+                                        width: '20px',
+                                        height: '20px',
+                                        fontSize: '0.75rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontWeight: '700'
+                                    }}>
+                                        {activeFiltersCount}
+                                    </span>
+                                )}
+                            </button>
+                            {activeFiltersCount > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={resetFilters}
+                                    className="btn btn-danger btn-sm"
+                                    style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+                                >
+                                    ✕ Сбросить
+                                </button>
+                            )}
+                        </div>
+                        
+                        {/* Расширенные фильтры */}
+                        {showFilters && (
+                            <div className="animate-fade-in" style={{ 
+                                display: 'grid', 
+                                gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', 
+                                gap: '1rem',
+                                paddingTop: '1rem',
+                                borderTop: '1px solid var(--border)'
+                            }}>
+                                <div className="form-group">
+                                    <label style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>👤 Менеджер:</label>
+                                    <select
+                                        value={managerFilter}
+                                        onChange={(e) => setManagerFilter(e.target.value)}
+                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)' }}
+                                    >
+                                        <option value="">Все менеджеры</option>
+                                        {managers.map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>✅ Валидность:</label>
+                                    <select
+                                        value={validityFilter}
+                                        onChange={(e) => setValidityFilter(e.target.value)}
+                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)' }}
+                                    >
+                                        <option value="">Все статусы</option>
+                                        <option value="valid">Валидный</option>
+                                        <option value="invalid">Невалидный</option>
+                                        <option value="pending">На рассмотрении</option>
+                                        <option value="not_counted">Не засчитано</option>
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>📡 Трафик:</label>
+                                    <select
+                                        value={trafficFilter}
+                                        onChange={(e) => setTrafficFilter(e.target.value)}
+                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)' }}
+                                    >
+                                        <option value="">Весь трафик</option>
+                                        {trafficOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                    </select>
+                                </div>
+                                <div className="form-group">
+                                    <label style={{ fontSize: '0.85rem', marginBottom: '0.25rem' }}>🌍 Страна:</label>
+                                    <select
+                                        value={countryFilter}
+                                        onChange={(e) => setCountryFilter(e.target.value)}
+                                        style={{ padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--border)' }}
+                                    >
+                                        <option value="">Все страны</option>
+                                        {countryOptions.map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {/* Статус фильтрации */}
+                        <div style={{ 
+                            marginTop: '0.75rem', 
+                            fontSize: '0.85rem', 
+                            color: 'var(--text-muted)',
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center'
+                        }}>
+                            <span>
+                                📊 Найдено записей: <strong style={{ color: 'var(--primary)' }}>{filteredRecords.length}</strong>
+                                {filteredRecords.length !== records.length && (
+                                    <span> из {records.length}</span>
+                                )}
+                            </span>
+                            {activeFiltersCount > 0 && (
+                                <span style={{ color: 'var(--warning)' }}>
+                                    🎛️ Активных фильтров: {activeFiltersCount}
+                                </span>
+                            )}
+                        </div>
                     </div>
                     <table className="table">
                         <thead>
@@ -8245,7 +8697,7 @@
                         
                         setIsAppLoading(false);
                     } catch (error) {
-('Ошибка загрузки данных приложения:', error);
+                        console.error('Ошибка загрузки данных приложения:', error);
                         setIsAppLoading(false);
                     }
                 };
@@ -8371,7 +8823,7 @@
                 rootElement
             );
         } catch (error) {
-('Ошибка инициализации React:', error);
+            console.error('Ошибка инициализации React:', error);
         }
     </script>
 </body>
