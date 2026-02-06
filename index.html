@@ -2091,57 +2091,30 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback, createContext, useContext } = React;
         
-        // Чтение конфигурации из config.js (с fallback значениями)
+        // Чтение конфигурации из config.js
+        // Все пароли, ставки, бонусы, тарифы — ТОЛЬКО в config.js (не в git!)
         const config = window.ENV_CONFIG || {};
         
-        const users = config.users || {}; 
+        if (!window.ENV_CONFIG) {
+            console.error('ОШИБКА: config.js не загружен! Скопируйте config.example.js в config.js');
+        }
         
-        const TEAM_LEADER_NAME = config.TEAM_LEADER_NAME;
-        const TEAM_LEADER_BASE_RATE = config.TEAM_LEADER_BASE_RATE;
-        const DEFAULT_BASE_RATE = config.DEFAULT_BASE_RATE;
+        // Данные из config — без fallback (всё должно быть в config.js)
+        const users = config.users || {};
+        const TEAM_LEADER_NAME = config.TEAM_LEADER_NAME || '';
+        const TEAM_LEADER_BASE_RATE = config.TEAM_LEADER_BASE_RATE || 0;
+        const DEFAULT_BASE_RATE = config.DEFAULT_BASE_RATE || 0;
         const DEFAULT_TARIFFS = config.DEFAULT_TARIFFS || [];
         const AVAILABLE_YEARS = config.AVAILABLE_YEARS || [];
-        const TEAM_LEADER_SALARY_PASSWORD = config.TEAM_LEADER_SALARY_PASSWORD;
+        const TEAM_LEADER_SALARY_PASSWORD = config.TEAM_LEADER_SALARY_PASSWORD || '';
         const DEFAULT_MANAGERS = config.DEFAULT_MANAGERS || [];
         const INITIAL_MANAGERS = config.INITIAL_MANAGERS || [];
-        const INVALID_BONUS_PER_FTD = config.INVALID_BONUS_PER_FTD || 20;
-        const TEAM_LEADER_PER_FTD = config.TEAM_LEADER_PER_FTD || 30;
-        const TEAM_PLAN_BONUS_AMOUNT = config.TEAM_PLAN_BONUS_AMOUNT || 500;
+        const INVALID_BONUS_PER_FTD = config.INVALID_BONUS_PER_FTD || 0;
+        const TEAM_LEADER_PER_FTD = config.TEAM_LEADER_PER_FTD || 0;
+        const TEAM_PLAN_BONUS_AMOUNT = config.TEAM_PLAN_BONUS_AMOUNT || 0;
         const TRAFFIC_OPTIONS = config.TRAFFIC_OPTIONS || [];
         const COUNTRY_OPTIONS = config.COUNTRY_OPTIONS || [];
-        
-        // Предустановленные наборы условий для менеджеров
-        const MANAGER_TARIFF_PRESETS = {
-            preset1: {
-                name: 'Вариант 1',
-                tariffs: [
-                    { min: 1, max: 4, baseRate: 1000, bonusPerFTD: 55 },
-                    { min: 5, max: 9, baseRate: 1100, bonusPerFTD: 60 },
-                    { min: 10, max: 12, baseRate: 1200, bonusPerFTD: 70 },
-                    { min: 13, max: 19, baseRate: 1300, bonusPerFTD: 90 },
-                    { min: 20, max: 999, baseRate: 1500, bonusPerFTD: 120 }
-                ]
-            },
-            preset2: {
-                name: 'Вариант 2',
-                tariffs: [
-                    { min: 1, max: 4, baseRate: 800, bonusPerFTD: 55 },
-                    { min: 5, max: 7, baseRate: 800, bonusPerFTD: 60 },
-                    { min: 8, max: 12, baseRate: 900, bonusPerFTD: 70 },
-                    { min: 13, max: 19, baseRate: 1200, bonusPerFTD: 90 },
-                    { min: 20, max: 999, baseRate: 1500, bonusPerFTD: 120 }
-                ]
-            },
-            preset3: {
-                name: 'Вариант 3',
-                tariffs: [
-                    { min: 1, max: 2, baseRate: 500, bonusPerFTD: 25 },
-                    { min: 3, max: 5, baseRate: 500, bonusPerFTD: 45 },
-                    { min: 6, max: 7, baseRate: 500, bonusPerFTD: 65 },
-                    { min: 8, max: 999, baseRate: 700, bonusPerFTD: 65 }
-                ]
-            }
-        };
+        const MANAGER_TARIFF_PRESETS = config.MANAGER_TARIFF_PRESETS || {};
         
         const DateUtils = {
             getMonthKey(dateStr) {
@@ -2708,10 +2681,10 @@
         
         const StorageUtils = (() => {
             let db = null;
-            const DB_NAME = config.DB_NAME || 'FTDTrackerDB';
-            const DB_VERSION = config.DB_VERSION || 1;
-            const STORE_NAME = config.STORE_NAME || 'data';
-            const MIGRATION_KEY = config.MIGRATION_KEY || 'migration_completed';
+            const DB_NAME = config.DB_NAME;
+            const DB_VERSION = config.DB_VERSION;
+            const STORE_NAME = config.STORE_NAME;
+            const MIGRATION_KEY = config.MIGRATION_KEY;
 
             const initDB = async () => {
                 if (db) return db;
@@ -3652,10 +3625,10 @@
                         StorageUtils.setItem('managerClientsCount', importedManagerClientsCount);
                         setSortConfig(data.sortConfig || { key: 'date', direction: 'desc' });
                         StorageUtils.setItem('sortConfig', data.sortConfig || { key: 'date', direction: 'desc' });
-                        setInvalidBonusPerFTD(data.invalidBonusPerFTD || 20);
-                        StorageUtils.setItem('invalidBonusPerFTD', data.invalidBonusPerFTD || 20);
-                        setTeamLeaderPerFTD(data.teamLeaderPerFTD || 30);
-                        StorageUtils.setItem('teamLeaderPerFTD', data.teamLeaderPerFTD || 30);
+                        setInvalidBonusPerFTD(data.invalidBonusPerFTD || INVALID_BONUS_PER_FTD);
+                        StorageUtils.setItem('invalidBonusPerFTD', data.invalidBonusPerFTD || INVALID_BONUS_PER_FTD);
+                        setTeamLeaderPerFTD(data.teamLeaderPerFTD || TEAM_LEADER_PER_FTD);
+                        StorageUtils.setItem('teamLeaderPerFTD', data.teamLeaderPerFTD || TEAM_LEADER_PER_FTD);
                         setDisabledAgents(data.disabledAgents || {});
                         StorageUtils.setItem('disabledAgents', data.disabledAgents || {});
                         onSuccess('Данные успешно восстановлены!');
@@ -4131,7 +4104,7 @@
                     : tariffs;
                 
                 if (!tariffsToUse || tariffsToUse.length === 0) {
-                    const defaultRate = managerBaseRates?.[manager] || 800;
+                    const defaultRate = managerBaseRates?.[manager] || DEFAULT_BASE_RATE;
                     return {
                         baseRate: defaultRate,
                         bonusPerFTD: 0
@@ -4149,7 +4122,7 @@
                 }
                 
                 if (!tariff) {
-                    const defaultRate = managerBaseRates?.[manager] || 800;
+                    const defaultRate = managerBaseRates?.[manager] || DEFAULT_BASE_RATE;
                     return {
                         baseRate: defaultRate,
                         bonusPerFTD: 0
@@ -4159,16 +4132,16 @@
                 // Если используются индивидуальные тарифы, используем их напрямую
                 if (managerSpecificTariffs && managerSpecificTariffs.length > 0) {
                     return {
-                        baseRate: tariff.baseRate || 800,
+                        baseRate: tariff.baseRate || DEFAULT_BASE_RATE,
                         bonusPerFTD: tariff.bonusPerFTD || 0
                     };
                 }
                 
                 // Иначе используем логику с базовой ставкой и разницей
                 const minTariffRate = tariffsToUse.length > 0 
-                    ? Math.min(...tariffsToUse.map(t => t.baseRate || 800))
-                    : 800;
-                const currentTariffRate = tariff?.baseRate || 800;
+                    ? Math.min(...tariffsToUse.map(t => t.baseRate || DEFAULT_BASE_RATE))
+                    : DEFAULT_BASE_RATE;
+                const currentTariffRate = tariff?.baseRate || DEFAULT_BASE_RATE;
                 
                 const tariffDifference = currentTariffRate - minTariffRate;
                 

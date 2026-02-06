@@ -1,5 +1,6 @@
 # Конфигурация с паролями
 config.js
+secrets.js
 
 # Зависимости
 node_modules/
